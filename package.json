@@ -1,0 +1,15 @@
+{
+    "type": "module",
+    "scripts": {
+        "dev:server": "node --watch --loader ts-node/esm src/server.ts",
+        "dev:client": "node --watch --loader ts-node/esm src/client.ts",
+        "build": "tsc",
+        "start:server": "node dist/server.js",
+        "start:client": "node dist/client.js"
+    },
+    "devDependencies": {
+        "@types/node": "^25.6.2",
+        "ts-node": "^10.9.2",
+        "typescript": "^6.0.3"
+    }
+}
