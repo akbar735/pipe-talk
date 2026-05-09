@@ -34,6 +34,30 @@ export function createMessageParser(onMessage: (message: IMessage) => void | Pro
     }
 }
 
+function splitMessageTarget(answer: string) {
+    const separatorIndex = answer.indexOf(':');
+
+    if (separatorIndex === -1) {
+        return ['', ''] as const;
+    }
+
+    return [
+        answer.slice(0, separatorIndex).trim(),
+        answer.slice(separatorIndex + 1).trim()
+    ] as const;
+}
+
+function normalizeFilePath(path: string) {
+    const trimmedPath = path.trim();
+    const quote = trimmedPath[0];
+
+    if ((quote === '"' || quote === "'") && trimmedPath.at(-1) === quote) {
+        return trimmedPath.slice(1, -1);
+    }
+
+    return trimmedPath;
+}
+
 export function askGreetingQuestion(askQuestion: AskQuestion, socket: Socket, parsed: IMessage) {
     askQuestion(parsed.msg ?? '', async (answer) => {
         const cleanAnswer = answer.trim();
@@ -58,7 +82,7 @@ export function askGreetingQuestion(askQuestion: AskQuestion, socket: Socket, pa
             return
         }
 
-        const [userId, msg] = cleanAnswer.split(':').map(item => item?.trim())
+        const [userId, msg] = splitMessageTarget(cleanAnswer)
 
         if (!userId || !msg) {
             process.stdout.write(Red + 'Enter Valid User Name\n\n' + RESET_COLOR)
@@ -72,7 +96,7 @@ export function askGreetingQuestion(askQuestion: AskQuestion, socket: Socket, pa
                 return
             }
             if (msg.toLocaleLowerCase().includes('-f')) {
-                const path = msg.slice(msg.toLowerCase().indexOf('-f') + 2).trim()
+                const path = normalizeFilePath(msg.slice(msg.toLowerCase().indexOf('-f') + 2))
                 const isValid = await isValidPath(path)
                 if (socket.destroyed) {
                     return
