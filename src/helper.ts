@@ -112,7 +112,7 @@ export function askGreetingQuestion(askQuestion: AskQuestion, socket: Socket, pa
                     })
                     return
                 }
-                const readStream = fs.createReadStream(path, { highWaterMark: 16 * 1024 })
+                const readStream = fs.createReadStream(path, { highWaterMark: 16 * 1024  })
                 const fileName = pathModule.basename(path);
                 const fileSize = (await fsp.stat(path)).size;
                 let seq = 0;

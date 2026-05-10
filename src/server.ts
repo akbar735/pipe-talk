@@ -1,9 +1,11 @@
 import net from 'node:net';
 import { createMessageParser, stringify } from './helper.js';
 import { Blue, greetings, Green, Red, Yellow, RESET_COLOR, OPTIONS } from './constants.js';
-import { IMessage, ISocketExtended, Type } from './types.js';
+import { IMessage, ISocketExtended, ITransferState, Type } from './types.js';
 
 const clientsList = new Map<string, ISocketExtended>()
+const activeTransfer = new Map<string, ITransferState>();
+
 const server = net.createServer((socket: ISocketExtended) => {
     const pendingFileMessages: Array<{ targetClient: ISocketExtended; message: IMessage }> = []
     let isWaitingForTargetDrain = false;
@@ -88,17 +90,48 @@ const server = net.createServer((socket: ISocketExtended) => {
             }
             if (parsed.type === Type.SEND_FILE) {
                 const targetClient = parsed.to ? clientsList.get(parsed.to) : undefined;
+
+                if (socket.userId && (!activeTransfer.get(socket.userId))) {
+                    activeTransfer.set(socket.userId, {
+                        to: parsed.to,
+                        from: parsed.from,
+                        fileSize: parsed.fileSize,
+                        transferedBytes: parsed.currentTotalBytes
+                    })
+                } else if (socket.userId && (activeTransfer.get(socket.userId))) {
+                    activeTransfer.set(socket.userId, {
+                        to: parsed.to,
+                        from: parsed.from,
+                        fileSize: parsed.fileSize,
+                        transferedBytes: parsed.currentTotalBytes
+                    })
+                }
                 if (targetClient) {
                     pendingFileMessages.push({ targetClient, message: parsed })
                     processPendingFileMessages()
                 }
             }
+            if (parsed.type === Type.RECIEVED_FILE) {
+                if (parsed.from) {
+                    activeTransfer.delete(parsed.from)
+                }
+            }
         }
     });
     socket.on('data', handleMessage);
-    socket.on('close', (data) => {
+    socket.on('close', () => {
         console.log(`Client disconnected: ${socket.userId}`)
+
         if (socket.userId) {
+
+            if (activeTransfer.get(socket.userId) && activeTransfer.get(socket.userId)?.to) {
+                const targetClient = clientsList.get(activeTransfer.get(socket.userId)?.to as string)
+                if (targetClient) {
+                    targetClient.write(stringify({
+                        type: Type.TRANSFER_ABORTED,
+                    }))
+                }
+            }
             clientsList.delete(socket.userId)
         }
     })

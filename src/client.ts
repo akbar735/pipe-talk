@@ -2,7 +2,7 @@ import net, { type Socket } from 'node:net';
 import fs, { WriteStream } from 'node:fs';
 import readline from 'node:readline';
 import { createMessageParser, stringify, askGreetingQuestion, showProgressBarWithMetaData } from './helper.js';
-import { Cyan, RESET_COLOR, Magenta } from './constants.js'
+import { Cyan, RESET_COLOR, Magenta, Red } from './constants.js'
 import { DataFlow, IMessage, Type } from './types.js';
 
 
@@ -91,6 +91,10 @@ function processPendingFileMessages(activeSocket: Socket) {
                 type: Type.FEEDABCK,
                 msg: Magenta + `You recieved a file ${nextMessage.fileName} from ` + (nextMessage.from ?? 'Unknown user') + '\n' + RESET_COLOR
             })
+            activeSocket.write(stringify({
+                type: Type.RECIEVED_FILE,
+                from: nextMessage.from
+            }))
         })
         pendingFileMessages.shift()
 
@@ -138,9 +142,14 @@ function registerSocketEvents(activeSocket: Socket) {
                     msg: Magenta + (parsed.from ?? 'Unknown user') + ' ' + `Sending File ${parsed.fileName}\n` + RESET_COLOR
                 })
             }
-        
+
             pendingFileMessages.push(parsed)
             processPendingFileMessages(activeSocket)
+        } else if (parsed.type === Type.TRANSFER_ABORTED) {
+            askGreetingQuestion(askQuestion, activeSocket, {
+                type: Type.FEEDABCK,
+                msg: Red + 'File Transfered cancelled\n' + RESET_COLOR
+            })
         }
     })
     activeSocket.on('data', handleMessage)

@@ -10,8 +10,9 @@ export enum Type{
     LIST_USERS = 'list-users',
     SEND_TO = 'send-to',
     SEND_FILE = 'send-file',
-    RECIEVE_FILE = 'recieve-file'
-
+    RECIEVE_FILE = 'recieve-file',
+    RECIEVED_FILE = 'recieved-file',
+    TRANSFER_ABORTED = 'transfer-aborted'
 }
 
 export interface IMessage{
@@ -29,6 +30,12 @@ export interface IMessage{
     currentTotalBytes?: number;
 }
 
+export interface ITransferState{
+    from?: string;
+    to?:string;
+    fileSize?: number;
+    transferedBytes?: number;
+}
 export interface ISocketExtended extends Socket{
     userId?: string;
 }
