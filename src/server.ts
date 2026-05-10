@@ -23,6 +23,7 @@ const server = net.createServer((socket: ISocketExtended) => {
                 fileName: nextMessage.message.fileName,
                 fileSize: nextMessage.message.fileSize,
                 bytes: nextMessage.message.bytes,
+                currentTotalBytes: nextMessage.message.currentTotalBytes,
                 seq: nextMessage.message.seq
             }))
 

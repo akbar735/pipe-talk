@@ -26,6 +26,7 @@ export interface IMessage{
     seq?: number;
     fileSize?: number;
     bytes?: number;
+    currentTotalBytes?: number;
 }
 
 export interface ISocketExtended extends Socket{
@@ -37,4 +38,9 @@ export enum Command{
     LIST_USERS = 'list users',
     CLEAR = 'clear',
     CLR = 'clr',
+}
+
+export enum DataFlow{
+    DOWNLOAD = 'download',
+    UPLOAD = 'upload'
 }

@@ -1,9 +1,9 @@
 import net, { type Socket } from 'node:net';
 import fs, { WriteStream } from 'node:fs';
 import readline from 'node:readline';
-import { createMessageParser, stringify, askGreetingQuestion } from './helper.js';
+import { createMessageParser, stringify, askGreetingQuestion, showProgressBarWithMetaData } from './helper.js';
 import { Cyan, RESET_COLOR, Magenta } from './constants.js'
-import { IMessage, Type } from './types.js';
+import { DataFlow, IMessage, Type } from './types.js';
 
 
 const rl = readline.createInterface({
@@ -79,7 +79,19 @@ function processPendingFileMessages(activeSocket: Socket) {
             return
         }
 
-        const canContinue = writeStream.write(Buffer.from(data, 'base64'))
+        const isFileComplete = nextMessage.currentTotalBytes === nextMessage.fileSize
+        const canContinue = writeStream.write(Buffer.from(data, 'base64'), () => {
+            showProgressBarWithMetaData(nextMessage, DataFlow.DOWNLOAD)
+
+            if (!isFileComplete) {
+                return
+            }
+
+            askGreetingQuestion(askQuestion, activeSocket, {
+                type: Type.FEEDABCK,
+                msg: Magenta + `You recieved a file ${nextMessage.fileName} from ` + (nextMessage.from ?? 'Unknown user') + '\n' + RESET_COLOR
+            })
+        })
         pendingFileMessages.shift()
 
         if (!canContinue) {
@@ -120,6 +132,13 @@ function registerSocketEvents(activeSocket: Socket) {
                 msg: Magenta + (parsed.userId ?? 'Unknown user') + ' ' + 'Sent a Message: ' + RESET_COLOR + (parsed.msg ?? '')
             })
         } else if (parsed.type === Type.RECIEVE_FILE) {
+            if (parsed.seq === 0) {
+                askGreetingQuestion(askQuestion, activeSocket, {
+                    type: Type.FEEDABCK,
+                    msg: Magenta + (parsed.from ?? 'Unknown user') + ' ' + `Sending File ${parsed.fileName}\n` + RESET_COLOR
+                })
+            }
+        
             pendingFileMessages.push(parsed)
             processPendingFileMessages(activeSocket)
         }

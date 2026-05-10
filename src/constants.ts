@@ -1,3 +1,5 @@
+import { DataFlow } from "./types.js";
+
 // ANSI Color Sequences
 export const Black =  '\u001b[30m';
 export const Red =  '\u001b[31m';
@@ -26,3 +28,16 @@ ${Magenta}clear | clr${RESET_COLOR} ${Grey}---->${RESET_COLOR} ${Cyan}(Clear Scr
 export const greetings = `------------------***----------------------
 ${OPTIONS}
 `
+
+// icons code
+export const UP_ARROW = '\u2191'
+export const DOWN_ARROW = '\u2193'
+
+export const DataFlowIcon = {
+    [DataFlow.DOWNLOAD]: DOWN_ARROW,
+    [DataFlow.UPLOAD]: UP_ARROW
+}
+export const DataFlowMessage = {
+    [DataFlow.DOWNLOAD]: 'Downloaded',
+    [DataFlow.UPLOAD]: 'Uploaded'
+}
