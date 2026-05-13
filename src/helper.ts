@@ -3,7 +3,7 @@ import fsp from 'node:fs/promises';
 import pathModule from 'node:path';
 import fs from 'node:fs';
 import { Green, Red, RESET_COLOR, OPTIONS, Yellow, DataFlowIcon, DataFlowMessage } from './constants.js';
-import { AskQuestion, Command, DataFlow, IMessage, Type } from './types.js';
+import { AskQuestion, Command, DataFlow, IMessage, ISocketExtended, PendingFileMessage, Type } from './types.js';
 import { type Socket } from 'node:net';
 
 const progressLineState = new Map<string, { lastRenderedAt: number; visibleLength: number }>();
@@ -112,7 +112,7 @@ export function askGreetingQuestion(askQuestion: AskQuestion, socket: Socket, pa
                     })
                     return
                 }
-                const readStream = fs.createReadStream(path, { highWaterMark: 16 * 1024  })
+                const readStream = fs.createReadStream(path, { highWaterMark: 16 * 1024 })
                 const fileName = pathModule.basename(path);
                 const fileSize = (await fsp.stat(path)).size;
                 let seq = 0;
@@ -241,5 +241,41 @@ export function showProgressBarWithMetaData(fileMessage: IMessage, dataFlow: Dat
     if (isComplete) {
         process.stdout.write('\n')
         progressLineState.delete(progressKey)
+    }
+}
+
+
+
+export function processServerPendingFileMessages(socket: ISocketExtended, isWaitingForTargetDrain: boolean, pendingFileMessages: Array<PendingFileMessage>) {
+    if (isWaitingForTargetDrain) {
+        return
+    }
+
+    while (pendingFileMessages.length > 0) {
+        const nextMessage = pendingFileMessages[0];
+        const canContinue = nextMessage.targetClient.write(stringify({
+            type: Type.RECIEVE_FILE,
+            from: socket.userId,
+            data: nextMessage.message.data,
+            fileId: nextMessage.message.fileId,
+            fileName: nextMessage.message.fileName,
+            fileSize: nextMessage.message.fileSize,
+            bytes: nextMessage.message.bytes,
+            currentTotalBytes: nextMessage.message.currentTotalBytes,
+            seq: nextMessage.message.seq
+        }))
+
+        pendingFileMessages.shift()
+
+        if (!canContinue) {
+            isWaitingForTargetDrain = true
+            socket.pause()
+            nextMessage.targetClient.once('drain', () => {
+                isWaitingForTargetDrain = false
+                socket.resume()
+                processServerPendingFileMessages(socket, isWaitingForTargetDrain, pendingFileMessages)
+            })
+            return
+        }
     }
 }

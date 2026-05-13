@@ -51,3 +51,5 @@ export enum DataFlow{
     DOWNLOAD = 'download',
     UPLOAD = 'upload'
 }
+
+export type PendingFileMessage = { targetClient: ISocketExtended; message: IMessage }
