@@ -18,14 +18,20 @@ export const ITALICIZE = "\u001b[3m";
 export const UNDERLINE = "\u001b[4m";
 
 export const OPTIONS = `
-Choose one of the following operations
+Available commands
+------------------
+${Magenta}list users | lu${RESET_COLOR}         ${Grey}->${RESET_COLOR} ${Cyan}Show everyone currently online${RESET_COLOR}
+${Magenta}<user>: <message>${RESET_COLOR}       ${Grey}->${RESET_COLOR} ${Cyan}Send a direct message to a user${RESET_COLOR}
+${Magenta}<user>: -f <file-path>${RESET_COLOR}  ${Grey}->${RESET_COLOR} ${Cyan}Send a file to a user${RESET_COLOR}
+${Magenta}clear | clr${RESET_COLOR}             ${Grey}->${RESET_COLOR} ${Cyan}Clear the terminal screen${RESET_COLOR}
 
-${Magenta}list users | lu${RESET_COLOR} ${Grey}---->${RESET_COLOR} ${Cyan}(List all online users)${RESET_COLOR}
-${Magenta}<userName>:<message>${RESET_COLOR} ${Grey}---->${RESET_COLOR} ${Cyan}(Send message to specific User)${RESET_COLOR}
-${Magenta}<userName>:-f <path>${RESET_COLOR} ${Grey}---->${RESET_COLOR} ${Cyan}(Send File/Folder to specific User) ${RESET_COLOR}
-${Magenta}clear | clr${RESET_COLOR} ${Grey}---->${RESET_COLOR} ${Cyan}(Clear Screen)${RESET_COLOR}
+${Grey}Examples${RESET_COLOR}
+${Magenta}alex: Hi, are you available for a quick sync?${RESET_COLOR}
+${Magenta}alex: -f ./docs/project-brief.pdf${RESET_COLOR}
 `
-export const greetings = `------------------***----------------------
+export const greetings = `========================================
+ Pipe Talk
+========================================
 ${OPTIONS}
 `
 

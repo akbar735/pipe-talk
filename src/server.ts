@@ -1,7 +1,6 @@
 import net from 'node:net';
 import { createMessageParser, stringify } from './helper.js';
-import { Blue, greetings, Green, Red, Yellow, RESET_COLOR, OPTIONS } from './constants.js';
-import { IMessage, ISocketExtended, ITransferState, PendingFileMessage, Type } from './types.js';
+import { ISocketExtended, PendingFileMessage, Type } from './types.js';
 import { handleListUsers, handleRecievedFiles, handleSendFile, handleSendTo, handleUserId } from './server-request-handlers.js';
 import { activeTransfer, clientsList } from './globals.js';
 
@@ -36,8 +35,8 @@ const server = net.createServer((socket: ISocketExtended) => {
             }
         }
     });
-    socket.on('data', handleMessage);
-    socket.on('close', () => {
+
+    const handleClose = () => {
         console.log(`Client disconnected: ${socket.userId}`)
 
         if (socket.userId) {
@@ -51,10 +50,14 @@ const server = net.createServer((socket: ISocketExtended) => {
             }
             clientsList.delete(socket.userId)
         }
-    })
-    socket.on('error', (err) => {
+    }
+    const handleError = (err: Error) => {
         console.log(`Client Lost:`, err.message)
-    })
+    }
+    
+    socket.on('data', handleMessage);
+    socket.on('close', handleClose)
+    socket.on('error', handleError)
 });
 
 server.listen(4000, '0.0.0.0', () => {

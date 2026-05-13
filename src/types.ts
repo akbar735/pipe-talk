@@ -28,6 +28,7 @@ export interface IMessage{
     fileSize?: number;
     bytes?: number;
     currentTotalBytes?: number;
+    filePath?: string;
 }
 
 export interface ITransferState{
@@ -50,6 +51,18 @@ export enum Command{
 export enum DataFlow{
     DOWNLOAD = 'download',
     UPLOAD = 'upload'
+}
+
+export enum ResourceType{
+    FOLDER = 'folder',
+    FILE = 'file',
+    INVALID = 'invalid'
+}
+
+export interface IFileInfo{
+    fileName: string;
+    filePath: string;
+    fullPath: string;
 }
 
 export type PendingFileMessage = { targetClient: ISocketExtended; message: IMessage }

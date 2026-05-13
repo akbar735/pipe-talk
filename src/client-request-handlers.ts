@@ -1,8 +1,10 @@
 import fs, { type WriteStream } from 'node:fs';
+import { mkdir } from 'node:fs/promises';
 import { type Socket } from 'node:net';
 import { Cyan, Magenta, Red, RESET_COLOR } from './constants.js';
 import { askGreetingQuestion, showProgressBarWithMetaData, stringify } from './helper.js';
 import { type AskQuestion, DataFlow, type IMessage, Type } from './types.js';
+import path from 'node:path';
 
 type ClientHandlerState = {
     writeStream: WriteStream | null;
@@ -27,20 +29,27 @@ function closeWriteStream(state: ClientHandlerState) {
     state.writeStream = null;
 }
 
-function createWriteStreamForMessage(state: ClientHandlerState, message: IMessage) {
-    if (!message.fileId || !message.fileName) {
+async function createWriteStreamForMessage(state: ClientHandlerState, message: IMessage) {
+    if (!message.fileId || !message.fileName || !message.filePath) {
         return null;
     }
-
+    if(message.fileName !== message.filePath){
+        await mkdir(
+            path.dirname(message.filePath as string),
+            { recursive: true }
+        );
+    }
+    console.log('message.filePath:', message.filePath)
+   
     closeWriteStream(state);
-    state.writeStream = fs.createWriteStream(`${message.fileId}${message.fileName}`);
+    state.writeStream = fs.createWriteStream(`${message.filePath}`);
 
     return state.writeStream;
 }
 
-function getWriteStreamForMessage(state: ClientHandlerState, message: IMessage) {
+async function getWriteStreamForMessage(state: ClientHandlerState, message: IMessage) {
     if (message.seq === 0) {
-        return createWriteStreamForMessage(state, message);
+        return await createWriteStreamForMessage(state, message);
     }
 
     return state.writeStream;
@@ -114,7 +123,7 @@ function writeFileChunk(
     }
 }
 
-function processPendingFileMessages(state: ClientHandlerState, askQuestion: AskQuestion, activeSocket: Socket) {
+async function processPendingFileMessages(state: ClientHandlerState, askQuestion: AskQuestion, activeSocket: Socket) {
     if (state.isWaitingForFileDrain) {
         return;
     }
@@ -127,7 +136,7 @@ function processPendingFileMessages(state: ClientHandlerState, askQuestion: AskQ
             continue;
         }
 
-        const writeStream = getWriteStreamForMessage(state, nextMessage);
+        const writeStream = await getWriteStreamForMessage(state, nextMessage);
         if (!writeStream) {
             return;
         }
