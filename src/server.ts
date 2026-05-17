@@ -1,6 +1,6 @@
 import net from 'node:net';
 import { createMessageParser, stringify } from './helper.js';
-import { ISocketExtended, PendingFileMessage, Type } from './types.js';
+import { ISocketExtended, PendingFileMessage, TargetDrainState, Type } from './types.js';
 import { handleListUsers, handleRecievedFiles, handleSendFile, handleSendTo, handleUserId } from './server-request-handlers.js';
 import { activeTransfer, clientsList } from './globals.js';
 
@@ -8,7 +8,9 @@ import { activeTransfer, clientsList } from './globals.js';
 
 const server = net.createServer((socket: ISocketExtended) => {
     const pendingFileMessages: Array<PendingFileMessage> = []
-    let isWaitingForTargetDrain = false;
+    const targetDrainState: TargetDrainState = {
+        isWaitingForTargetDrain: false
+    };
 
     socket.write(stringify({
         type: Type.ID,
@@ -28,10 +30,10 @@ const server = net.createServer((socket: ISocketExtended) => {
                handleSendTo(socket, parsed)
             }
             if (parsed.type === Type.SEND_FILE) {
-               handleSendFile(socket, parsed, isWaitingForTargetDrain, pendingFileMessages)
+               handleSendFile(socket, parsed, targetDrainState, pendingFileMessages)
             }
             if (parsed.type === Type.RECIEVED_FILE) {
-                handleRecievedFiles(parsed)
+                handleRecievedFiles(socket, parsed)
             }
         }
     });

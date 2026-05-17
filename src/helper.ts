@@ -3,12 +3,14 @@ import path from 'node:path';
 import fsp, { readdir } from 'node:fs/promises';
 import pathModule from 'node:path';
 import fs from 'node:fs';
-import { Green, Red, RESET_COLOR, OPTIONS, Yellow, DataFlowIcon, DataFlowMessage } from './constants.js';
-import { AskQuestion, Command, DataFlow, IFileInfo, IMessage, ISocketExtended, PendingFileMessage, ResourceType, Type } from './types.js';
+import { Green, Red, RESET_COLOR, OPTIONS, Yellow, DataFlowIcon, DataFlowMessage, progressBarWidth } from './constants.js';
+import { AskQuestion, Command, DataFlow, IFileInfo, IMessage, ISocketExtended, PendingFileMessage, ResourceType, TargetDrainState, Type } from './types.js';
 import { type Socket } from 'node:net';
 
 const progressLineState = new Map<string, { lastRenderedAt: number; visibleLength: number }>();
 const PROGRESS_RENDER_INTERVAL_MS = 80;
+const pendingFileReceipts = new Map<string, () => void>();
+const completedFileReceipts = new Set<string>();
 
 export function stringify(obj: Object) {
     return JSON.stringify(obj) + '\n'
@@ -16,6 +18,49 @@ export function stringify(obj: Object) {
 
 export function parse(str: string) {
     return JSON.parse(str)
+}
+
+export function resolvePendingFileReceipt(fileId?: string) {
+    if (!fileId) {
+        return
+    }
+
+    const resolveReceipt = pendingFileReceipts.get(fileId);
+    if (!resolveReceipt) {
+        completedFileReceipts.add(fileId);
+        return
+    }
+
+    pendingFileReceipts.delete(fileId);
+    resolveReceipt();
+}
+
+function waitForFileReceipt(fileId: string) {
+    if (completedFileReceipts.has(fileId)) {
+        completedFileReceipts.delete(fileId);
+        return Promise.resolve();
+    }
+
+    return new Promise<void>((resolve) => {
+        pendingFileReceipts.set(fileId, resolve);
+    });
+}
+
+function writeTransferMessage(socket: Socket, message: IMessage) {
+    return new Promise<void>((resolve) => {
+        const canContinue = socket.write(stringify(message), () => {
+            showProgressBarWithMetaData(message, DataFlow.UPLOAD)
+            resolve();
+        });
+
+        if (canContinue) {
+            return;
+        }
+
+        socket.once('drain', () => {
+            resolve();
+        });
+    });
 }
 
 export function createMessageParser(onMessage: (message: IMessage) => void | Promise<void>) {
@@ -110,15 +155,20 @@ export function askGreetingQuestion(askQuestion: AskQuestion, socket: Socket, pa
                     })
                     return
                 }
-                if(isValid.resourceType === ResourceType.FILE){
-                    return sendFile(socket, msg, userId, path, askQuestion)
+                if (isValid.resourceType === ResourceType.FILE) {
+                    return sendFile(socket, userId, path, askQuestion)
                 }
-                if(isValid.resourceType === ResourceType.FOLDER){
+                if (isValid.resourceType === ResourceType.FOLDER) {
                     const folderName = pathModule.basename(path)
-                    const files = await getFilesRecursively(path, folderName)
-                    console.log(files)
-                    files.slice(files.length-1).forEach(file => {
-                        sendFile(socket, msg, userId, file.fullPath, askQuestion, file.filePath)
+                    const files = (await getFilesRecursively(path, folderName)).filter(file => file.fileName !== '.DS_Store')
+
+                    for (const file of files) {
+                        await sendFile(socket, userId, file.fullPath, askQuestion, file.filePath, false)
+                    }
+
+                    askGreetingQuestion(askQuestion, socket, {
+                        type: Type.FEEDABCK,
+                        msg: Green + `Folder ${folderName} sent to ${userId}` + RESET_COLOR + '\n'
                     })
                     return
                 }
@@ -137,15 +187,15 @@ export function askGreetingQuestion(askQuestion: AskQuestion, socket: Socket, pa
 
 
 
-export async function isValidPath(path: string): Promise<{resourceType: ResourceType}> {
+export async function isValidPath(path: string): Promise<{ resourceType: ResourceType }> {
     try {
         await fsp.access(path);
         const pathInfo = await fsp.stat(path);
         const isDirectory = pathInfo.isDirectory();
 
-        return { resourceType: isDirectory? ResourceType.FOLDER: ResourceType.FILE };
+        return { resourceType: isDirectory ? ResourceType.FOLDER : ResourceType.FILE };
     } catch {
-        return {resourceType: ResourceType.INVALID};
+        return { resourceType: ResourceType.INVALID };
     }
 }
 
@@ -181,15 +231,16 @@ export function showProgressBarWithMetaData(fileMessage: IMessage, dataFlow: Dat
         return
     }
 
-    if (fileSize <= 0) {
-        const fallbackLine = `Bytes Received: ${receivedBytes}`;
-        const padding = Math.max((previousState?.visibleLength ?? 0) - fallbackLine.length, 0);
+    if (fileSize === 0) {
+        const dataFlowIcon = DataFlowIcon[dataFlow];
+        const dataFlowMessage = DataFlowMessage[dataFlow];
+        const bar = '#'.repeat(progressBarWidth);
+        const line = `${Yellow}[${bar}] ${dataFlowMessage}: 100% ${dataFlowIcon} 0 B/0 B${RESET_COLOR}`;
+        const visibleLength = stripAnsi(line).length;
+        const padding = Math.max((previousState?.visibleLength ?? 0) - visibleLength, 0);
 
-        process.stdout.write(`\r${fallbackLine}${' '.repeat(padding)}`);
-        progressLineState.set(progressKey, {
-            lastRenderedAt: now,
-            visibleLength: fallbackLine.length
-        })
+        process.stdout.write(`\r${line}${' '.repeat(padding)}\n`);
+        progressLineState.delete(progressKey)
         return
     }
 
@@ -197,9 +248,9 @@ export function showProgressBarWithMetaData(fileMessage: IMessage, dataFlow: Dat
     const dataFlowMessage = DataFlowMessage[dataFlow];
 
     const progress = Math.min(receivedBytes / fileSize, 1);
-    const barWidth = 50;
-    const filledWidth = Math.floor(progress * barWidth);
-    const bar = `${'#'.repeat(filledWidth)}${'-'.repeat(barWidth - filledWidth)}`;
+
+    const filledWidth = Math.floor(progress * progressBarWidth);
+    const bar = `${'#'.repeat(filledWidth)}${'-'.repeat(progressBarWidth - filledWidth)}`;
     const progressPercent = Math.round(progress * 100).toString().padStart(3, ' ');
     const transferMeta = `${formatBytes(receivedBytes)}/${formatBytes(fileSize)}`;
     const line = `${Yellow}[${bar}] ${dataFlowMessage}: ${progressPercent}% ${dataFlowIcon} ${transferMeta}${RESET_COLOR}`;
@@ -220,8 +271,8 @@ export function showProgressBarWithMetaData(fileMessage: IMessage, dataFlow: Dat
 
 
 
-export function processServerPendingFileMessages(socket: ISocketExtended, isWaitingForTargetDrain: boolean, pendingFileMessages: Array<PendingFileMessage>) {
-    if (isWaitingForTargetDrain) {
+export function processServerPendingFileMessages(socket: ISocketExtended, targetDrainState: TargetDrainState, pendingFileMessages: Array<PendingFileMessage>) {
+    if (targetDrainState.isWaitingForTargetDrain) {
         return
     }
 
@@ -243,12 +294,12 @@ export function processServerPendingFileMessages(socket: ISocketExtended, isWait
         pendingFileMessages.shift()
 
         if (!canContinue) {
-            isWaitingForTargetDrain = true
+            targetDrainState.isWaitingForTargetDrain = true
             socket.pause()
             nextMessage.targetClient.once('drain', () => {
-                isWaitingForTargetDrain = false
+                targetDrainState.isWaitingForTargetDrain = false
                 socket.resume()
-                processServerPendingFileMessages(socket, isWaitingForTargetDrain, pendingFileMessages)
+                processServerPendingFileMessages(socket, targetDrainState, pendingFileMessages)
             })
             return
         }
@@ -256,55 +307,104 @@ export function processServerPendingFileMessages(socket: ISocketExtended, isWait
 }
 
 
-async function sendFile(socket: Socket, msg: string, userId: string,path:string, askQuestion: AskQuestion, filePath?:string) {
-
+async function sendFile(
+    socket: Socket,
+    userId: string,
+    path: string,
+    askQuestion: AskQuestion,
+    filePath?: string,
+    shouldPromptOnComplete = true
+) {
     if (socket.destroyed) {
         return
     }
 
-    const readStream = fs.createReadStream(path, { highWaterMark: 16 * 1024 })
-    const fileName = pathModule.basename(path);
     const fileSize = (await fsp.stat(path)).size;
-    let seq = 0;
-    let currentTotalBytes = 0;
+    const fileName = pathModule.basename(path);
     const fileId = `${userId}-${Date.now()}`
-    readStream.on('data', (chunk) => {
-        currentTotalBytes += chunk.length;
-        const message = {
+    const resolvedFilePath = filePath ? filePath : fileName
+    askGreetingQuestion(askQuestion, socket, {
+        type: Type.FEEDABCK,
+        msg: Green + `Sending ${fileName.length > 25 ? fileName.slice(0,25): fileName}...` + RESET_COLOR + '\n'
+    })
+
+    if (fileSize === 0) {
+        await writeTransferMessage(socket, {
             type: Type.SEND_FILE,
             to: userId,
-            data: chunk.toString('base64'),
-            fileSize: fileSize,
-            fileName: fileName,
-            filePath: filePath ? filePath : fileName,
-            bytes: chunk.length,
-            currentTotalBytes: currentTotalBytes,
-            fileId: fileId,
-            seq: seq++
-        };
-        const canContinue = socket.write(stringify(message), () => {
-            showProgressBarWithMetaData(message, DataFlow.UPLOAD)
+            data: '',
+            fileSize,
+            fileName,
+            filePath: resolvedFilePath,
+            bytes: 0,
+            currentTotalBytes: 0,
+            fileId,
+            seq: 0
         })
-        if (!canContinue) {
-            readStream.pause()
-            socket.once('drain', () => {
-                readStream.resume();
-            })
+
+        await waitForFileReceipt(fileId)
+
+        if (!shouldPromptOnComplete) {
+            return
         }
-    })
-    readStream.on('end', () => {
-        seq = 0;
+
         askGreetingQuestion(askQuestion, socket, {
             type: Type.FEEDABCK,
             msg: Green + `File ${fileName} Sent to ${userId}` + RESET_COLOR + '\n'
         })
-        readStream.close();
+        return
+    }
+
+    await new Promise<void>((resolve, reject) => {
+        const readStream = fs.createReadStream(path, { highWaterMark: 16 * 1024 })
+        let seq = 0;
+        let currentTotalBytes = 0;
+
+        readStream.on('data', (chunk) => {
+            currentTotalBytes += chunk.length;
+            const message = {
+                type: Type.SEND_FILE,
+                to: userId,
+                data: chunk.toString('base64'),
+                fileSize: fileSize,
+                fileName: fileName,
+                filePath: resolvedFilePath,
+                bytes: chunk.length,
+                currentTotalBytes: currentTotalBytes,
+                fileId: fileId,
+                seq: seq++
+            };
+            const canContinue = socket.write(stringify(message), () => {
+                showProgressBarWithMetaData(message, DataFlow.UPLOAD)
+            })
+            if (!canContinue) {
+                readStream.pause()
+                socket.once('drain', () => {
+                    readStream.resume();
+                })
+            }
+        })
+
+        readStream.once('error', reject)
+        readStream.on('end', () => {
+            readStream.close();
+            resolve();
+        })
     })
 
-    return readStream;
+    await waitForFileReceipt(fileId)
+
+    if (!shouldPromptOnComplete) {
+        return
+    }
+
+    askGreetingQuestion(askQuestion, socket, {
+        type: Type.FEEDABCK,
+        msg: Green + `File ${fileName} Sent to ${userId}` + RESET_COLOR + '\n'
+    })
 }
 
-async function getFilesRecursively(rootDirectory: string, baseName: string): Promise<IFileInfo[]>{
+async function getFilesRecursively(rootDirectory: string, baseName: string): Promise<IFileInfo[]> {
     const entries = await readdir(rootDirectory, {
         recursive: true,
         withFileTypes: true

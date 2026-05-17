@@ -1,7 +1,7 @@
 import { Blue, Green, greetings, OPTIONS, Red, RESET_COLOR, Yellow } from "./constants.js";
 import { activeTransfer, clientsList } from "./globals.js";
 import { processServerPendingFileMessages, stringify } from "./helper.js";
-import { IMessage, ISocketExtended, PendingFileMessage, Type } from "./types.js";
+import { IMessage, ISocketExtended, PendingFileMessage, TargetDrainState, Type } from "./types.js";
 
 export function handleUserId(socket: ISocketExtended, parsed: IMessage) {
     const userId = parsed.msg?.trim() ?? '';
@@ -42,7 +42,12 @@ export function handleSendTo(socket: ISocketExtended, parsed: IMessage) {
     }
 }
 
-export function handleSendFile(socket: ISocketExtended, parsed: IMessage, isWaitingForTargetDrain: boolean, pendingFileMessages: Array<PendingFileMessage>) {
+export function handleSendFile(
+    socket: ISocketExtended,
+    parsed: IMessage,
+    targetDrainState: TargetDrainState,
+    pendingFileMessages: Array<PendingFileMessage>
+) {
     const targetClient = parsed.to ? clientsList.get(parsed.to) : undefined;
 
     if (socket.userId && (!activeTransfer.get(socket.userId))) {
@@ -62,12 +67,23 @@ export function handleSendFile(socket: ISocketExtended, parsed: IMessage, isWait
     }
     if (targetClient) {
         pendingFileMessages.push({ targetClient, message: parsed })
-        processServerPendingFileMessages(socket, isWaitingForTargetDrain, pendingFileMessages)
+        processServerPendingFileMessages(socket, targetDrainState, pendingFileMessages)
     }
 }
 
-export function handleRecievedFiles(parsed: IMessage) {
-    if (parsed.from) {
-        activeTransfer.delete(parsed.from)
+export function handleRecievedFiles(socket: ISocketExtended, parsed: IMessage) {
+    if (!parsed.from) {
+        return
     }
+
+    const senderClient = clientsList.get(parsed.from);
+    if (senderClient) {
+        senderClient.write(stringify({
+            type: Type.RECIEVED_FILE,
+            from: socket.userId,
+            fileId: parsed.fileId
+        }))
+    }
+
+    activeTransfer.delete(parsed.from)
 }

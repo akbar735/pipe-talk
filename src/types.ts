@@ -65,4 +65,8 @@ export interface IFileInfo{
     fullPath: string;
 }
 
+export type TargetDrainState = {
+    isWaitingForTargetDrain: boolean;
+}
+
 export type PendingFileMessage = { targetClient: ISocketExtended; message: IMessage }

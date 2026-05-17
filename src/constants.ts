@@ -29,7 +29,8 @@ ${Grey}Examples${RESET_COLOR}
 ${Magenta}alex: Hi, are you available for a quick sync?${RESET_COLOR}
 ${Magenta}alex: -f ./docs/project-brief.pdf${RESET_COLOR}
 `
-export const greetings = `========================================
+export const greetings = `
+========================================
  Pipe Talk
 ========================================
 ${OPTIONS}
@@ -47,3 +48,5 @@ export const DataFlowMessage = {
     [DataFlow.DOWNLOAD]: 'Downloaded',
     [DataFlow.UPLOAD]: 'Uploaded'
 }
+
+export const progressBarWidth = 50;

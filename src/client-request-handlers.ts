@@ -2,7 +2,7 @@ import fs, { type WriteStream } from 'node:fs';
 import { mkdir } from 'node:fs/promises';
 import { type Socket } from 'node:net';
 import { Cyan, Magenta, Red, RESET_COLOR } from './constants.js';
-import { askGreetingQuestion, showProgressBarWithMetaData, stringify } from './helper.js';
+import { askGreetingQuestion, resolvePendingFileReceipt, showProgressBarWithMetaData, stringify } from './helper.js';
 import { type AskQuestion, DataFlow, type IMessage, Type } from './types.js';
 import path from 'node:path';
 
@@ -10,14 +10,16 @@ type ClientHandlerState = {
     writeStream: WriteStream | null;
     pendingFileMessages: IMessage[];
     isWaitingForFileDrain: boolean;
+    isProcessingPendingMessages: boolean;
 };
 
 export function createClientHandlerState(): ClientHandlerState {
-    return {
-        writeStream: null,
-        pendingFileMessages: [],
-        isWaitingForFileDrain: false
-    };
+        return {
+            writeStream: null,
+            pendingFileMessages: [],
+            isWaitingForFileDrain: false,
+            isProcessingPendingMessages: false
+        };
 }
 
 function closeWriteStream(state: ClientHandlerState) {
@@ -39,8 +41,7 @@ async function createWriteStreamForMessage(state: ClientHandlerState, message: I
             { recursive: true }
         );
     }
-    console.log('message.filePath:', message.filePath)
-   
+
     closeWriteStream(state);
     state.writeStream = fs.createWriteStream(`${message.filePath}`);
 
@@ -65,14 +66,15 @@ function notifyIncomingFile(askQuestion: AskQuestion, activeSocket: Socket, mess
 function notifyFileReceived(askQuestion: AskQuestion, activeSocket: Socket, message: IMessage) {
     askGreetingQuestion(askQuestion, activeSocket, {
         type: Type.FEEDABCK,
-        msg: Magenta + `You recieved a file ${message.fileName} from ` + (message.from ?? 'Unknown user') + '\n' + RESET_COLOR
+        msg: Magenta + `You recieved a file ${(message.fileName?.length ?? 0) > 25 ? message.fileName?.slice(0,25): message.fileName} from ` + (message.from ?? 'Unknown user') + '\n' + RESET_COLOR
     });
 }
 
 function acknowledgeFileReceipt(activeSocket: Socket, message: IMessage) {
     activeSocket.write(stringify({
         type: Type.RECIEVED_FILE,
-        from: message.from
+        from: message.from,
+        fileId: message.fileId
     }));
 }
 
@@ -94,7 +96,7 @@ function waitForFileDrain(
     writeStream.once('drain', () => {
         state.isWaitingForFileDrain = false;
         activeSocket.resume();
-        processPendingFileMessages(state, askQuestion, activeSocket);
+        void processPendingFileMessages(state, askQuestion, activeSocket);
     });
 }
 
@@ -124,27 +126,38 @@ function writeFileChunk(
 }
 
 async function processPendingFileMessages(state: ClientHandlerState, askQuestion: AskQuestion, activeSocket: Socket) {
-    if (state.isWaitingForFileDrain) {
+    if (state.isWaitingForFileDrain || state.isProcessingPendingMessages) {
         return;
     }
 
-    while (state.pendingFileMessages.length > 0) {
-        const nextMessage = state.pendingFileMessages[0];
+    state.isProcessingPendingMessages = true;
 
-        if (!nextMessage.data || !nextMessage.fileId || !nextMessage.fileName) {
-            state.pendingFileMessages.shift();
-            continue;
+    try {
+        while (state.pendingFileMessages.length > 0) {
+            const nextMessage = state.pendingFileMessages[0];
+
+            if (nextMessage.data === undefined || !nextMessage.fileId || !nextMessage.fileName || (nextMessage.seq === 0 && !nextMessage.filePath)) {
+                state.pendingFileMessages.shift();
+                continue;
+            }
+
+            const writeStream = await getWriteStreamForMessage(state, nextMessage);
+            if (!writeStream) {
+                state.pendingFileMessages.shift();
+                continue;
+            }
+
+            writeFileChunk(state, askQuestion, activeSocket, nextMessage, writeStream);
+
+            if (state.isWaitingForFileDrain) {
+                return;
+            }
         }
+    } finally {
+        state.isProcessingPendingMessages = false;
 
-        const writeStream = await getWriteStreamForMessage(state, nextMessage);
-        if (!writeStream) {
-            return;
-        }
-
-        writeFileChunk(state, askQuestion, activeSocket, nextMessage, writeStream);
-
-        if (state.isWaitingForFileDrain) {
-            return;
+        if (!state.isWaitingForFileDrain && state.pendingFileMessages.length > 0) {
+            void processPendingFileMessages(state, askQuestion, activeSocket);
         }
     }
 }
@@ -184,7 +197,7 @@ function handleIncomingFile(
     }
 
     state.pendingFileMessages.push(message);
-    processPendingFileMessages(state, askQuestion, activeSocket);
+    void processPendingFileMessages(state, askQuestion, activeSocket);
 }
 
 function handleTransferAborted(askQuestion: AskQuestion, activeSocket: Socket) {
@@ -192,6 +205,10 @@ function handleTransferAborted(askQuestion: AskQuestion, activeSocket: Socket) {
         type: Type.FEEDABCK,
         msg: Red + 'File Transfered cancelled\n' + RESET_COLOR
     });
+}
+
+function handleReceivedFileAck(message: IMessage) {
+    resolvePendingFileReceipt(message.fileId);
 }
 
 export function handleClientMessage(
@@ -215,6 +232,9 @@ export function handleClientMessage(
             return;
         case Type.TRANSFER_ABORTED:
             handleTransferAborted(askQuestion, activeSocket);
+            return;
+        case Type.RECIEVED_FILE:
+            handleReceivedFileAck(message);
             return;
         default:
             return;
