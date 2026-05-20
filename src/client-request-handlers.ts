@@ -272,6 +272,14 @@ function handleTransferAborted(state: ClientHandlerState, askQuestion: AskQuesti
         message.msg ?? `${message.from ?? 'The other user'} is no longer connected. Transfer cancelled.`
     );
 
+    if (message.fileId && message.fileSize !== undefined && message.currentTotalBytes !== undefined) {
+        showProgressBarWithMetaData(message, DataFlow.UPLOAD);
+
+        if (message.fileSize > 0 && message.currentTotalBytes < message.fileSize) {
+            process.stdout.write('\n');
+        }
+    }
+
     askGreetingQuestion(askQuestion, activeSocket, {
         type: Type.FEEDABCK,
         msg: Red + (message.msg ?? 'File Transfered cancelled') + '\n' + RESET_COLOR

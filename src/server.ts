@@ -58,6 +58,8 @@ const server = net.createServer((socket: ISocketExtended) => {
                         type: Type.TRANSFER_ABORTED,
                         from: disconnectedUserId,
                         fileId: activeOutgoingTransfer.fileId,
+                        fileSize: activeOutgoingTransfer.fileSize,
+                        currentTotalBytes: activeOutgoingTransfer.transferedBytes,
                         msg: `${disconnectedUserId} is no longer connected. Transfer cancelled.`
                     }))
                 }

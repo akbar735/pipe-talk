@@ -3,13 +3,15 @@ import { abortedTransferFileIds, activeTransfer, clientsList } from "./globals.j
 import { processServerPendingFileMessages, stringify } from "./helper.js";
 import { IMessage, ISocketExtended, ITransferState, PendingFileMessage, TargetDrainState, Type } from "./types.js";
 
-function buildTransferAbortedMessage(otherUserId: string | undefined, fileId: string | undefined) {
+function buildTransferAbortedMessage(transfer: ITransferState, otherUserId: string | undefined) {
     const userLabel = otherUserId ?? 'The other user';
 
     return stringify({
         type: Type.TRANSFER_ABORTED,
         from: otherUserId,
-        fileId,
+        fileId: transfer.fileId,
+        fileSize: transfer.fileSize,
+        currentTotalBytes: transfer.transferedBytes,
         msg: `${userLabel} is no longer connected. Transfer cancelled.`
     })
 }
@@ -44,7 +46,7 @@ export function abortTransferForSender(
     }
 
     if (!senderSocket.destroyed) {
-        senderSocket.write(buildTransferAbortedMessage(otherUserId, transfer.fileId));
+        senderSocket.write(buildTransferAbortedMessage(transfer, otherUserId));
     }
 
     if (senderId) {
