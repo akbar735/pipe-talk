@@ -275,10 +275,6 @@ export function askGreetingQuestion(askQuestion: AskQuestion, socket: Socket, pa
                     type: Type.SEND_TO,
                     msg: cleanAnswer
                 }))
-                askGreetingQuestion(askQuestion, socket, {
-                    type: Type.FEEDABCK,
-                    msg: Green + `Sent to ${userId}` + RESET_COLOR + '\n'
-                })
             }
         } catch (error) {
             if (isTransferCancelledError(error)) {

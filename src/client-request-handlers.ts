@@ -232,6 +232,14 @@ function handleIdPrompt(askQuestion: AskQuestion, activeSocket: Socket, message:
     });
 }
 
+function handleFeedback(askQuestion: AskQuestion, activeSocket: Socket, message: IMessage) {
+    process.stdout.write(message.msg ?? '');
+    askGreetingQuestion(askQuestion, activeSocket, {
+        type: Type.FEEDABCK,
+        msg: ''
+    });
+}
+
 function handleServerResponse(askQuestion: AskQuestion, activeSocket: Socket, message: IMessage) {
     askGreetingQuestion(askQuestion, activeSocket, message);
 }
@@ -287,6 +295,9 @@ export function handleClientMessage(
     switch (message.type) {
         case Type.ID:
             handleIdPrompt(askQuestion, activeSocket, message);
+            return;
+        case Type.FEEDABCK:
+            handleFeedback(askQuestion, activeSocket, message);
             return;
         case Type.SERVER_RESPONSE:
             handleServerResponse(askQuestion, activeSocket, message);

@@ -59,10 +59,15 @@ const askQuestion: AskQuestion = (query, onAnswer) => {
     }
 
     clearActiveQuestion();
-    clientState.activeQuestionController = new AbortController();
+    const questionController = new AbortController();
+    clientState.activeQuestionController = questionController;
 
     try {
-        rl.question(query, { signal: clientState.activeQuestionController.signal }, (answer) => {
+        rl.question(query, { signal: questionController.signal }, (answer) => {
+            if (clientState.activeQuestionController === questionController) {
+                clientState.activeQuestionController = null;
+            }
+
             onAnswer(answer);
         });
     } catch (error) {

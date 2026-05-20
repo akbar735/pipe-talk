@@ -80,15 +80,47 @@ export function handleListUsers(socket: ISocketExtended) {
 }
 
 export function handleSendTo(socket: ISocketExtended, parsed: IMessage) {
-    const [userId, msg] = (parsed.msg ?? '').split(':').map((item: string) => item?.trim())
-    const targetClient = clientsList.get(userId);
-    if (targetClient && msg) {
-        targetClient.write(stringify({
-            type: Type.CLIENT_RESPONSE,
-            userId: socket.userId,
-            msg: Yellow + msg + '\n' + RESET_COLOR
+    const rawMessage = parsed.msg ?? '';
+    const separatorIndex = rawMessage.indexOf(':');
+
+    if (separatorIndex === -1) {
+        socket.write(stringify({
+            type: Type.FEEDABCK,
+            msg: Red + 'Enter Valid User Name\n\n' + RESET_COLOR
         }))
+        return
     }
+
+    const userId = rawMessage.slice(0, separatorIndex).trim();
+    const msg = rawMessage.slice(separatorIndex + 1).trim();
+    const targetClient = clientsList.get(userId);
+
+    if (!userId || !msg) {
+        socket.write(stringify({
+            type: Type.FEEDABCK,
+            msg: Red + 'Enter Valid User Name\n\n' + RESET_COLOR
+        }))
+        return
+    }
+
+    if (!targetClient) {
+        socket.write(stringify({
+            type: Type.FEEDABCK,
+            msg: Red + `${userId} is not online\n` + RESET_COLOR
+        }))
+        return
+    }
+
+    targetClient.write(stringify({
+        type: Type.CLIENT_RESPONSE,
+        userId: socket.userId,
+        msg: Yellow + msg + '\n' + RESET_COLOR
+    }))
+
+    socket.write(stringify({
+        type: Type.FEEDABCK,
+        msg: Green + `Sent to ${userId}\n` + RESET_COLOR
+    }))
 }
 
 export function handleSendFile(
