@@ -2,7 +2,7 @@ import fs, { type WriteStream } from 'node:fs';
 import { mkdir } from 'node:fs/promises';
 import { type Socket } from 'node:net';
 import { Cyan, Magenta, Red, RESET_COLOR } from './constants.js';
-import { askGreetingQuestion, resolvePendingFileReceipt, showProgressBarWithMetaData, stringify } from './helper.js';
+import { abortPendingFileTransfer, askGreetingQuestion, resolvePendingFileReceipt, showProgressBarWithMetaData, stringify } from './helper.js';
 import { type AskQuestion, DataFlow, type IMessage, Type } from './types.js';
 import path from 'node:path';
 
@@ -32,6 +32,14 @@ function closeWriteStream(state: ClientHandlerState) {
 
     state.writeStream = null;
     writeStream.end();
+}
+
+function resetPendingFileState(state: ClientHandlerState) {
+    closeWriteStream(state);
+    state.pendingFileMessages.length = 0;
+    state.isWaitingForFileDrain = false;
+    state.isProcessingPendingMessages = false;
+    state.isFinalizingCurrentFile = false;
 }
 
 async function createWriteStreamForMessage(state: ClientHandlerState, message: IMessage) {
@@ -249,10 +257,16 @@ function handleIncomingFile(
     void processPendingFileMessages(state, askQuestion, activeSocket);
 }
 
-function handleTransferAborted(askQuestion: AskQuestion, activeSocket: Socket) {
+function handleTransferAborted(state: ClientHandlerState, askQuestion: AskQuestion, activeSocket: Socket, message: IMessage) {
+    resetPendingFileState(state);
+    abortPendingFileTransfer(
+        message.fileId,
+        message.msg ?? `${message.from ?? 'The other user'} is no longer connected. Transfer cancelled.`
+    );
+
     askGreetingQuestion(askQuestion, activeSocket, {
         type: Type.FEEDABCK,
-        msg: Red + 'File Transfered cancelled\n' + RESET_COLOR
+        msg: Red + (message.msg ?? 'File Transfered cancelled') + '\n' + RESET_COLOR
     });
 }
 
@@ -284,7 +298,7 @@ export function handleClientMessage(
             handleIncomingFile(state, askQuestion, activeSocket, message);
             return;
         case Type.TRANSFER_ABORTED:
-            handleTransferAborted(askQuestion, activeSocket);
+            handleTransferAborted(state, askQuestion, activeSocket, message);
             return;
         case Type.FOLDER_TRANSFER_COMPLETE:
             handleFolderTransferComplete(askQuestion, activeSocket, message);

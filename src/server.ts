@@ -1,8 +1,8 @@
 import net from 'node:net';
 import { createMessageParser, stringify } from './helper.js';
 import { ISocketExtended, PendingFileMessage, TargetDrainState, Type } from './types.js';
-import { handleFolderTransferComplete, handleListUsers, handleRecievedFiles, handleSendFile, handleSendTo, handleUserId } from './server-request-handlers.js';
-import { activeTransfer, clientsList } from './globals.js';
+import { abortTransferForSender, handleFolderTransferComplete, handleListUsers, handleRecievedFiles, handleSendFile, handleSendTo, handleUserId } from './server-request-handlers.js';
+import { abortedTransferFileIds, activeTransfer, clientsList } from './globals.js';
 
 
 
@@ -11,6 +11,9 @@ const server = net.createServer((socket: ISocketExtended) => {
     const targetDrainState: TargetDrainState = {
         isWaitingForTargetDrain: false
     };
+
+    socket.pendingFileMessages = pendingFileMessages;
+    socket.targetDrainState = targetDrainState;
 
     socket.write(stringify({
         type: Type.ID,
@@ -45,15 +48,38 @@ const server = net.createServer((socket: ISocketExtended) => {
         console.log(`Client disconnected: ${socket.userId}`)
 
         if (socket.userId) {
-            if (activeTransfer.get(socket.userId) && activeTransfer.get(socket.userId)?.to) {
-                const targetClient = clientsList.get(activeTransfer.get(socket.userId)?.to as string)
-                if (targetClient) {
+            const disconnectedUserId = socket.userId;
+            const activeOutgoingTransfer = activeTransfer.get(disconnectedUserId);
+
+            if (activeOutgoingTransfer?.to) {
+                const targetClient = clientsList.get(activeOutgoingTransfer.to);
+                if (targetClient && !targetClient.destroyed) {
                     targetClient.write(stringify({
                         type: Type.TRANSFER_ABORTED,
+                        from: disconnectedUserId,
+                        fileId: activeOutgoingTransfer.fileId,
+                        msg: `${disconnectedUserId} is no longer connected. Transfer cancelled.`
                     }))
                 }
+
+                activeTransfer.delete(disconnectedUserId)
             }
-            clientsList.delete(socket.userId)
+
+            for (const [senderId, transfer] of activeTransfer.entries()) {
+                if (transfer.to !== disconnectedUserId) {
+                    continue
+                }
+
+                const senderClient = clientsList.get(senderId);
+                if (senderClient) {
+                    abortTransferForSender(senderClient, transfer, disconnectedUserId);
+                } else {
+                    activeTransfer.delete(senderId);
+                }
+            }
+
+            abortedTransferFileIds.delete(disconnectedUserId)
+            clientsList.delete(disconnectedUserId)
         }
     }
     const handleError = (err: Error) => {

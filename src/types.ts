@@ -36,11 +36,14 @@ export interface IMessage{
 export interface ITransferState{
     from?: string;
     to?:string;
+    fileId?: string;
     fileSize?: number;
     transferedBytes?: number;
 }
 export interface ISocketExtended extends Socket{
     userId?: string;
+    pendingFileMessages?: PendingFileMessage[];
+    targetDrainState?: TargetDrainState;
 }
 
 export enum Command{

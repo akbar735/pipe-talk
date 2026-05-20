@@ -1,7 +1,56 @@
 import { Blue, Green, greetings, OPTIONS, Red, RESET_COLOR, Yellow } from "./constants.js";
-import { activeTransfer, clientsList } from "./globals.js";
+import { abortedTransferFileIds, activeTransfer, clientsList } from "./globals.js";
 import { processServerPendingFileMessages, stringify } from "./helper.js";
-import { IMessage, ISocketExtended, PendingFileMessage, TargetDrainState, Type } from "./types.js";
+import { IMessage, ISocketExtended, ITransferState, PendingFileMessage, TargetDrainState, Type } from "./types.js";
+
+function buildTransferAbortedMessage(otherUserId: string | undefined, fileId: string | undefined) {
+    const userLabel = otherUserId ?? 'The other user';
+
+    return stringify({
+        type: Type.TRANSFER_ABORTED,
+        from: otherUserId,
+        fileId,
+        msg: `${userLabel} is no longer connected. Transfer cancelled.`
+    })
+}
+
+function resetTransferRuntime(socket: ISocketExtended) {
+    socket.pendingFileMessages?.splice(0, socket.pendingFileMessages.length);
+
+    if (socket.targetDrainState) {
+        socket.targetDrainState.isWaitingForTargetDrain = false;
+    }
+
+    socket.resume();
+}
+
+export function abortTransferForSender(
+    senderSocket: ISocketExtended,
+    transfer: ITransferState,
+    otherUserId?: string
+) {
+    const senderId = senderSocket.userId;
+    const transferFileId = transfer.fileId ?? '__unknown_transfer__';
+
+    resetTransferRuntime(senderSocket);
+
+    if (senderId && abortedTransferFileIds.get(senderId) === transferFileId) {
+        activeTransfer.delete(senderId);
+        return
+    }
+
+    if (senderId) {
+        abortedTransferFileIds.set(senderId, transferFileId);
+    }
+
+    if (!senderSocket.destroyed) {
+        senderSocket.write(buildTransferAbortedMessage(otherUserId, transfer.fileId));
+    }
+
+    if (senderId) {
+        activeTransfer.delete(senderId);
+    }
+}
 
 export function handleUserId(socket: ISocketExtended, parsed: IMessage) {
     const userId = parsed.msg?.trim() ?? '';
@@ -48,27 +97,34 @@ export function handleSendFile(
     targetDrainState: TargetDrainState,
     pendingFileMessages: Array<PendingFileMessage>
 ) {
+    if (socket.userId && abortedTransferFileIds.get(socket.userId) !== (parsed.fileId ?? '__unknown_transfer__')) {
+        abortedTransferFileIds.delete(socket.userId);
+    }
+
     const targetClient = parsed.to ? clientsList.get(parsed.to) : undefined;
 
-    if (socket.userId && (!activeTransfer.get(socket.userId))) {
-        activeTransfer.set(socket.userId, {
+    if (!targetClient) {
+        abortTransferForSender(socket, {
             to: parsed.to,
-            from: parsed.from,
+            fileId: parsed.fileId,
             fileSize: parsed.fileSize,
             transferedBytes: parsed.currentTotalBytes
-        })
-    } else if (socket.userId && (activeTransfer.get(socket.userId))) {
+        }, parsed.to);
+        return
+    }
+
+    if (socket.userId) {
         activeTransfer.set(socket.userId, {
             to: parsed.to,
             from: parsed.from,
+            fileId: parsed.fileId,
             fileSize: parsed.fileSize,
             transferedBytes: parsed.currentTotalBytes
         })
     }
-    if (targetClient) {
-        pendingFileMessages.push({ targetClient, message: parsed })
-        processServerPendingFileMessages(socket, targetDrainState, pendingFileMessages)
-    }
+
+    pendingFileMessages.push({ targetClient, message: parsed })
+    processServerPendingFileMessages(socket, targetDrainState, pendingFileMessages)
 }
 
 export function handleFolderTransferComplete(socket: ISocketExtended, parsed: IMessage) {
@@ -89,6 +145,8 @@ export function handleRecievedFiles(socket: ISocketExtended, parsed: IMessage) {
     if (!parsed.from) {
         return
     }
+
+    abortedTransferFileIds.delete(parsed.from);
 
     const senderClient = clientsList.get(parsed.from);
     if (senderClient) {

@@ -24,11 +24,21 @@ const connectionOptions = {
 
 type ClientPromptState = {
     activeQuestionController: AbortController | null;
+    activeSocket: Socket | null;
+    isReadlineClosed: boolean;
+    isShuttingDown: boolean;
 };
 
 const clientState: ClientPromptState = {
-    activeQuestionController: null
+    activeQuestionController: null,
+    activeSocket: null,
+    isReadlineClosed: false,
+    isShuttingDown: false
 };
+
+rl.on('close', () => {
+    clientState.isReadlineClosed = true;
+});
 
 const clientHandlerState = createClientHandlerState();
 
@@ -44,20 +54,41 @@ function clearActiveQuestion() {
 }
 
 const askQuestion: AskQuestion = (query, onAnswer) => {
+    if (clientState.isReadlineClosed || clientState.isShuttingDown) {
+        return;
+    }
+
     clearActiveQuestion();
     clientState.activeQuestionController = new AbortController();
 
-    rl.question(query, { signal: clientState.activeQuestionController.signal }, (answer) => {
-        onAnswer(answer);
-    });
+    try {
+        rl.question(query, { signal: clientState.activeQuestionController.signal }, (answer) => {
+            onAnswer(answer);
+        });
+    } catch (error) {
+        if (error instanceof Error && error.message.includes('readline was closed')) {
+            return;
+        }
+
+        throw error;
+    }
 };
 
 function connectToServer() {
+    if (clientState.isShuttingDown) {
+        return;
+    }
+
     const socket = net.createConnection(connectionOptions);
+    clientState.activeSocket = socket;
     registerSocketEvents(socket);
 }
 
 function askRetryQuestion() {
+    if (clientState.isReadlineClosed || clientState.isShuttingDown) {
+        return;
+    }
+
     askQuestion(Cyan + 'Enter try to Retry Connection\n' + RESET_COLOR, (answer) => {
         if (answer.trim().toLowerCase() === 'try') {
             connectToServer();
@@ -66,6 +97,22 @@ function askRetryQuestion() {
 
         askRetryQuestion();
     });
+}
+
+function shutdownClient() {
+    if (clientState.isShuttingDown) {
+        return;
+    }
+
+    clientState.isShuttingDown = true;
+    clearActiveQuestion();
+    clientState.activeSocket?.destroy();
+
+    if (!clientState.isReadlineClosed) {
+        rl.close();
+    }
+
+    process.exit(0);
 }
 
 function registerSocketEvents(activeSocket: Socket) {
@@ -80,8 +127,14 @@ function registerSocketEvents(activeSocket: Socket) {
         handleClientSocketEnd(clientHandlerState, clearActiveQuestion);
     });
     activeSocket.on('close', () => {
+        if (clientState.activeSocket === activeSocket) {
+            clientState.activeSocket = null;
+        }
         handleClientSocketClose(clientHandlerState, clearActiveQuestion, askRetryQuestion);
     });
 }
+
+process.once('SIGINT', shutdownClient);
+process.once('SIGTERM', shutdownClient);
 
 connectToServer();

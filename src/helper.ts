@@ -9,8 +9,10 @@ import { type Socket } from 'node:net';
 
 const progressLineState = new Map<string, { lastRenderedAt: number; visibleLength: number }>();
 const PROGRESS_RENDER_INTERVAL_MS = 80;
-const pendingFileReceipts = new Map<string, () => void>();
+const pendingFileReceipts = new Map<string, { resolve: () => void; reject: (error: Error) => void }>();
 const completedFileReceipts = new Set<string>();
+const abortedFileReceipts = new Map<string, Error>();
+const transferAbortListeners = new Map<string, Set<(error: Error) => void>>();
 
 export function stringify(obj: Object) {
     return JSON.stringify(obj) + '\n'
@@ -25,14 +27,59 @@ export function resolvePendingFileReceipt(fileId?: string) {
         return
     }
 
-    const resolveReceipt = pendingFileReceipts.get(fileId);
-    if (!resolveReceipt) {
+    abortedFileReceipts.delete(fileId);
+
+    const pendingReceipt = pendingFileReceipts.get(fileId);
+    if (!pendingReceipt) {
         completedFileReceipts.add(fileId);
         return
     }
 
     pendingFileReceipts.delete(fileId);
-    resolveReceipt();
+    pendingReceipt.resolve();
+}
+
+function createTransferCancelledError(reason: string) {
+    const error = new Error(reason);
+    error.name = 'TransferCancelledError';
+    return error;
+}
+
+export function isTransferCancelledError(error: unknown) {
+    return error instanceof Error && error.name === 'TransferCancelledError';
+}
+
+function notifyTransferAbortListeners(fileId: string, error: Error) {
+    const listeners = transferAbortListeners.get(fileId);
+    if (!listeners) {
+        return
+    }
+
+    transferAbortListeners.delete(fileId);
+
+    for (const listener of listeners) {
+        listener(error);
+    }
+}
+
+export function abortPendingFileTransfer(fileId?: string, reason = 'Transfer cancelled') {
+    if (!fileId) {
+        return
+    }
+
+    completedFileReceipts.delete(fileId);
+    const error = createTransferCancelledError(reason);
+    const pendingReceipt = pendingFileReceipts.get(fileId);
+    const hasActiveTransferListener = (transferAbortListeners.get(fileId)?.size ?? 0) > 0;
+
+    if (pendingReceipt) {
+        pendingFileReceipts.delete(fileId);
+        pendingReceipt.reject(error);
+    } else if (!hasActiveTransferListener) {
+        abortedFileReceipts.set(fileId, error);
+    }
+
+    notifyTransferAbortListeners(fileId, error);
 }
 
 function waitForFileReceipt(fileId: string) {
@@ -41,9 +88,34 @@ function waitForFileReceipt(fileId: string) {
         return Promise.resolve();
     }
 
-    return new Promise<void>((resolve) => {
-        pendingFileReceipts.set(fileId, resolve);
+    const abortedReceiptError = abortedFileReceipts.get(fileId);
+    if (abortedReceiptError) {
+        abortedFileReceipts.delete(fileId);
+        return Promise.reject(abortedReceiptError);
+    }
+
+    return new Promise<void>((resolve, reject) => {
+        pendingFileReceipts.set(fileId, { resolve, reject });
     });
+}
+
+function addTransferAbortListener(fileId: string, listener: (error: Error) => void) {
+    const listeners = transferAbortListeners.get(fileId) ?? new Set<(error: Error) => void>();
+    listeners.add(listener);
+    transferAbortListeners.set(fileId, listeners);
+
+    return () => {
+        const activeListeners = transferAbortListeners.get(fileId);
+        if (!activeListeners) {
+            return
+        }
+
+        activeListeners.delete(listener);
+
+        if (activeListeners.size === 0) {
+            transferAbortListeners.delete(fileId);
+        }
+    };
 }
 
 function writeTransferMessage(socket: Socket, message: IMessage) {
@@ -127,83 +199,96 @@ function normalizeFilePath(path: string) {
 
 export function askGreetingQuestion(askQuestion: AskQuestion, socket: Socket, parsed: IMessage) {
     askQuestion(parsed.msg ?? '', async (answer) => {
-        const cleanAnswer = answer.trim();
-        const command = cleanAnswer.toLowerCase();
+        try {
+            const cleanAnswer = answer.trim();
+            const command = cleanAnswer.toLowerCase();
 
-        if (command === Command.LIST_USERS || command === Command.LU) {
-            if (socket.destroyed) {
-                return
-            }
-            socket.write(stringify({
-                type: Type.LIST_USERS
-            }))
-            return
-        }
-        if (command === Command.CLEAR || command === Command.CLR) {
-            readline.cursorTo(process.stdout, 0, 0);
-            readline.clearScreenDown(process.stdout);
-            askGreetingQuestion(askQuestion, socket, {
-                type: Type.FEEDABCK,
-                msg: Green + OPTIONS + RESET_COLOR + '\n'
-            })
-            return
-        }
-
-        const [userId, msg] = splitMessageTarget(cleanAnswer)
-
-        if (!userId || !msg) {
-            process.stdout.write(Red + 'Enter Valid User Name\n\n' + RESET_COLOR)
-            askGreetingQuestion(askQuestion, socket, {
-                type: Type.FEEDABCK,
-                msg: Green + OPTIONS + RESET_COLOR + '\n'
-            })
-            return
-        } else {
-            if (socket.destroyed) {
-                return
-            }
-            if (msg.toLocaleLowerCase().includes('-f')) {
-                const path = normalizeFilePath(msg.slice(msg.toLowerCase().indexOf('-f') + 2))
-                const isValid = await isValidPath(path);
-                if (isValid.resourceType === ResourceType.INVALID) {
-                    process.stdout.write(Red + 'Please provide a valid path\n\n' + RESET_COLOR)
-                    askGreetingQuestion(askQuestion, socket, {
-                        type: Type.FEEDABCK,
-                        msg: Green + OPTIONS + RESET_COLOR + '\n'
-                    })
+            if (command === Command.LIST_USERS || command === Command.LU) {
+                if (socket.destroyed) {
                     return
                 }
-                if (isValid.resourceType === ResourceType.FILE) {
-                    return sendFile(socket, userId, path, askQuestion)
-                }
-                if (isValid.resourceType === ResourceType.FOLDER) {
-                    const folderName = pathModule.basename(path)
-                    const files = (await getFilesRecursively(path, folderName)).filter(file => file.fileName !== '.DS_Store')
+                socket.write(stringify({
+                    type: Type.LIST_USERS
+                }))
+                return
+            }
+            if (command === Command.CLEAR || command === Command.CLR) {
+                readline.cursorTo(process.stdout, 0, 0);
+                readline.clearScreenDown(process.stdout);
+                askGreetingQuestion(askQuestion, socket, {
+                    type: Type.FEEDABCK,
+                    msg: Green + OPTIONS + RESET_COLOR + '\n'
+                })
+                return
+            }
 
-                    for (const file of files) {
-                        await sendFile(socket, userId, file.fullPath, askQuestion, file.filePath, false)
+            const [userId, msg] = splitMessageTarget(cleanAnswer)
+
+            if (!userId || !msg) {
+                process.stdout.write(Red + 'Enter Valid User Name\n\n' + RESET_COLOR)
+                askGreetingQuestion(askQuestion, socket, {
+                    type: Type.FEEDABCK,
+                    msg: Green + OPTIONS + RESET_COLOR + '\n'
+                })
+                return
+            } else {
+                if (socket.destroyed) {
+                    return
+                }
+                if (msg.toLocaleLowerCase().includes('-f')) {
+                    const path = normalizeFilePath(msg.slice(msg.toLowerCase().indexOf('-f') + 2))
+                    const isValid = await isValidPath(path);
+                    if (isValid.resourceType === ResourceType.INVALID) {
+                        process.stdout.write(Red + 'Please provide a valid path\n\n' + RESET_COLOR)
+                        askGreetingQuestion(askQuestion, socket, {
+                            type: Type.FEEDABCK,
+                            msg: Green + OPTIONS + RESET_COLOR + '\n'
+                        })
+                        return
                     }
+                    if (isValid.resourceType === ResourceType.FILE) {
+                        await sendFile(socket, userId, path, askQuestion)
+                        return
+                    }
+                    if (isValid.resourceType === ResourceType.FOLDER) {
+                        const folderName = pathModule.basename(path)
+                        const files = (await getFilesRecursively(path, folderName)).filter(file => file.fileName !== '.DS_Store')
 
-                    socket.write(stringify({
-                        type: Type.FOLDER_TRANSFER_COMPLETE,
-                        to: userId,
-                        folderName
-                    }))
+                        for (const file of files) {
+                            await sendFile(socket, userId, file.fullPath, askQuestion, file.filePath, false)
+                        }
 
-                    askGreetingQuestion(askQuestion, socket, {
-                        type: Type.FEEDABCK,
-                        msg: Green + `Folder ${folderName} sent to ${userId}` + RESET_COLOR + '\n'
-                    })
-                    return
+                        socket.write(stringify({
+                            type: Type.FOLDER_TRANSFER_COMPLETE,
+                            to: userId,
+                            folderName
+                        }))
+
+                        askGreetingQuestion(askQuestion, socket, {
+                            type: Type.FEEDABCK,
+                            msg: Green + `Folder ${folderName} sent to ${userId}` + RESET_COLOR + '\n'
+                        })
+                        return
+                    }
                 }
+                socket.write(stringify({
+                    type: Type.SEND_TO,
+                    msg: cleanAnswer
+                }))
+                askGreetingQuestion(askQuestion, socket, {
+                    type: Type.FEEDABCK,
+                    msg: Green + `Sent to ${userId}` + RESET_COLOR + '\n'
+                })
             }
-            socket.write(stringify({
-                type: Type.SEND_TO,
-                msg: cleanAnswer
-            }))
+        } catch (error) {
+            if (isTransferCancelledError(error)) {
+                return
+            }
+
+            process.stdout.write(Red + 'Something went wrong while sending the transfer\n' + RESET_COLOR)
             askGreetingQuestion(askQuestion, socket, {
                 type: Type.FEEDABCK,
-                msg: Green + `Sent to ${userId}` + RESET_COLOR + '\n'
+                msg: Green + OPTIONS + RESET_COLOR + '\n'
             })
         }
     })
@@ -383,8 +468,41 @@ async function sendFile(
         const readStream = fs.createReadStream(path, { highWaterMark: 16 * 1024 })
         let seq = 0;
         let currentTotalBytes = 0;
+        let isSettled = false;
+
+        const settle = (callback: () => void) => {
+            if (isSettled) {
+                return
+            }
+
+            isSettled = true;
+            removeAbortListener();
+            callback();
+        };
+
+        const handleDrain = () => {
+            if (readStream.destroyed) {
+                return
+            }
+
+            readStream.resume();
+        };
+
+        const handleAbort = (error: Error) => {
+            settle(() => {
+                socket.off('drain', handleDrain);
+                readStream.destroy(error);
+                reject(error);
+            });
+        };
+
+        const removeAbortListener = addTransferAbortListener(fileId, handleAbort);
 
         readStream.on('data', (chunk) => {
+            if (isSettled) {
+                return
+            }
+
             currentTotalBytes += chunk.length;
             const message = {
                 type: Type.SEND_FILE,
@@ -403,16 +521,22 @@ async function sendFile(
             })
             if (!canContinue) {
                 readStream.pause()
-                socket.once('drain', () => {
-                    readStream.resume();
-                })
+                socket.once('drain', handleDrain)
             }
         })
 
-        readStream.once('error', reject)
+        readStream.once('error', (error) => {
+            settle(() => {
+                socket.off('drain', handleDrain);
+                reject(error);
+            });
+        })
         readStream.on('end', () => {
-            readStream.close();
-            resolve();
+            settle(() => {
+                readStream.close();
+                socket.off('drain', handleDrain);
+                resolve();
+            });
         })
     })
 
