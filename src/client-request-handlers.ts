@@ -11,6 +11,7 @@ type ClientHandlerState = {
     pendingFileMessages: IMessage[];
     isWaitingForFileDrain: boolean;
     isProcessingPendingMessages: boolean;
+    isFinalizingCurrentFile: boolean;
 };
 
 export function createClientHandlerState(): ClientHandlerState {
@@ -18,17 +19,19 @@ export function createClientHandlerState(): ClientHandlerState {
             writeStream: null,
             pendingFileMessages: [],
             isWaitingForFileDrain: false,
-            isProcessingPendingMessages: false
+            isProcessingPendingMessages: false,
+            isFinalizingCurrentFile: false
         };
 }
 
 function closeWriteStream(state: ClientHandlerState) {
-    if (!state.writeStream) {
+    const writeStream = state.writeStream;
+    if (!writeStream) {
         return;
     }
 
-    state.writeStream.end();
     state.writeStream = null;
+    writeStream.end();
 }
 
 async function createWriteStreamForMessage(state: ClientHandlerState, message: IMessage) {
@@ -70,6 +73,13 @@ function notifyFileReceived(askQuestion: AskQuestion, activeSocket: Socket, mess
     });
 }
 
+function notifyFolderReceived(askQuestion: AskQuestion, activeSocket: Socket, message: IMessage) {
+    askGreetingQuestion(askQuestion, activeSocket, {
+        type: Type.FEEDABCK,
+        msg: Magenta + `You recieved Folder ${message.folderName ?? 'Unknown folder'} from ` + (message.from ?? 'Unknown user') + '\n' + RESET_COLOR
+    });
+}
+
 function acknowledgeFileReceipt(activeSocket: Socket, message: IMessage) {
     activeSocket.write(stringify({
         type: Type.RECIEVED_FILE,
@@ -78,10 +88,38 @@ function acknowledgeFileReceipt(activeSocket: Socket, message: IMessage) {
     }));
 }
 
-function finishFileDownload(state: ClientHandlerState, askQuestion: AskQuestion, activeSocket: Socket, message: IMessage) {
+function finishFileDownload(
+    state: ClientHandlerState,
+    askQuestion: AskQuestion,
+    activeSocket: Socket,
+    message: IMessage,
+    writeStream: WriteStream
+) {
+    if (state.writeStream === writeStream) {
+        state.writeStream = null;
+    }
+
     notifyFileReceived(askQuestion, activeSocket, message);
     acknowledgeFileReceipt(activeSocket, message);
-    closeWriteStream(state);
+}
+
+function finalizeFileDownload(
+    state: ClientHandlerState,
+    askQuestion: AskQuestion,
+    activeSocket: Socket,
+    message: IMessage,
+    writeStream: WriteStream,
+    chunk: Buffer
+) {
+    state.pendingFileMessages.shift();
+    state.isFinalizingCurrentFile = true;
+
+    writeStream.end(chunk, () => {
+        showProgressBarWithMetaData(message, DataFlow.DOWNLOAD);
+        finishFileDownload(state, askQuestion, activeSocket, message, writeStream);
+        state.isFinalizingCurrentFile = false;
+        void processPendingFileMessages(state, askQuestion, activeSocket);
+    });
 }
 
 function waitForFileDrain(
@@ -107,15 +145,18 @@ function writeFileChunk(
     message: IMessage,
     writeStream: WriteStream
 ) {
-    const isFileComplete = message.currentTotalBytes === message.fileSize;
-    const canContinue = writeStream.write(Buffer.from(message.data ?? '', 'base64'), () => {
+    const chunk = Buffer.from(message.data ?? '', 'base64');
+    const fileSize = message.fileSize ?? 0;
+    const currentTotalBytes = message.currentTotalBytes ?? 0;
+    const isFileComplete = currentTotalBytes >= fileSize;
+
+    if (isFileComplete) {
+        finalizeFileDownload(state, askQuestion, activeSocket, message, writeStream, chunk);
+        return;
+    }
+
+    const canContinue = writeStream.write(chunk, () => {
         showProgressBarWithMetaData(message, DataFlow.DOWNLOAD);
-
-        if (!isFileComplete) {
-            return;
-        }
-
-        finishFileDownload(state, askQuestion, activeSocket, message);
     });
 
     state.pendingFileMessages.shift();
@@ -126,7 +167,7 @@ function writeFileChunk(
 }
 
 async function processPendingFileMessages(state: ClientHandlerState, askQuestion: AskQuestion, activeSocket: Socket) {
-    if (state.isWaitingForFileDrain || state.isProcessingPendingMessages) {
+    if (state.isWaitingForFileDrain || state.isProcessingPendingMessages || state.isFinalizingCurrentFile) {
         return;
     }
 
@@ -136,7 +177,15 @@ async function processPendingFileMessages(state: ClientHandlerState, askQuestion
         while (state.pendingFileMessages.length > 0) {
             const nextMessage = state.pendingFileMessages[0];
 
-            if (nextMessage.data === undefined || !nextMessage.fileId || !nextMessage.fileName || (nextMessage.seq === 0 && !nextMessage.filePath)) {
+            if (
+                nextMessage.data === undefined
+                || !nextMessage.fileId
+                || !nextMessage.fileName
+                || nextMessage.fileSize === undefined
+                || nextMessage.currentTotalBytes === undefined
+                || nextMessage.seq === undefined
+                || (nextMessage.seq === 0 && !nextMessage.filePath)
+            ) {
                 state.pendingFileMessages.shift();
                 continue;
             }
@@ -149,14 +198,14 @@ async function processPendingFileMessages(state: ClientHandlerState, askQuestion
 
             writeFileChunk(state, askQuestion, activeSocket, nextMessage, writeStream);
 
-            if (state.isWaitingForFileDrain) {
+            if (state.isWaitingForFileDrain || state.isFinalizingCurrentFile) {
                 return;
             }
         }
     } finally {
         state.isProcessingPendingMessages = false;
 
-        if (!state.isWaitingForFileDrain && state.pendingFileMessages.length > 0) {
+        if (!state.isWaitingForFileDrain && !state.isFinalizingCurrentFile && state.pendingFileMessages.length > 0) {
             void processPendingFileMessages(state, askQuestion, activeSocket);
         }
     }
@@ -207,6 +256,10 @@ function handleTransferAborted(askQuestion: AskQuestion, activeSocket: Socket) {
     });
 }
 
+function handleFolderTransferComplete(askQuestion: AskQuestion, activeSocket: Socket, message: IMessage) {
+    notifyFolderReceived(askQuestion, activeSocket, message);
+}
+
 function handleReceivedFileAck(message: IMessage) {
     resolvePendingFileReceipt(message.fileId);
 }
@@ -232,6 +285,9 @@ export function handleClientMessage(
             return;
         case Type.TRANSFER_ABORTED:
             handleTransferAborted(askQuestion, activeSocket);
+            return;
+        case Type.FOLDER_TRANSFER_COMPLETE:
+            handleFolderTransferComplete(askQuestion, activeSocket, message);
             return;
         case Type.RECIEVED_FILE:
             handleReceivedFileAck(message);

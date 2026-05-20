@@ -48,17 +48,35 @@ function waitForFileReceipt(fileId: string) {
 
 function writeTransferMessage(socket: Socket, message: IMessage) {
     return new Promise<void>((resolve) => {
+        let isWriteCallbackComplete = false;
+        let isDrainComplete = false;
+
+        const finalize = () => {
+            if (!isWriteCallbackComplete) {
+                return;
+            }
+
+            if (!isDrainComplete) {
+                return;
+            }
+
+            resolve();
+        };
+
         const canContinue = socket.write(stringify(message), () => {
             showProgressBarWithMetaData(message, DataFlow.UPLOAD)
-            resolve();
+            isWriteCallbackComplete = true;
+            finalize();
         });
 
         if (canContinue) {
+            isDrainComplete = true;
             return;
         }
 
         socket.once('drain', () => {
-            resolve();
+            isDrainComplete = true;
+            finalize();
         });
     });
 }
@@ -166,6 +184,12 @@ export function askGreetingQuestion(askQuestion: AskQuestion, socket: Socket, pa
                         await sendFile(socket, userId, file.fullPath, askQuestion, file.filePath, false)
                     }
 
+                    socket.write(stringify({
+                        type: Type.FOLDER_TRANSFER_COMPLETE,
+                        to: userId,
+                        folderName
+                    }))
+
                     askGreetingQuestion(askQuestion, socket, {
                         type: Type.FEEDABCK,
                         msg: Green + `Folder ${folderName} sent to ${userId}` + RESET_COLOR + '\n'
@@ -224,7 +248,7 @@ export function showProgressBarWithMetaData(fileMessage: IMessage, dataFlow: Dat
     const fileSize = fileMessage.fileSize ?? 0;
     const progressKey = `${dataFlow}:${fileMessage.fileId ?? fileMessage.fileName ?? 'transfer'}`;
     const previousState = progressLineState.get(progressKey);
-    const isComplete = fileSize > 0 && receivedBytes >= fileSize;
+    const isComplete = receivedBytes >= fileSize;
     const now = Date.now();
 
     if (previousState && !isComplete && now - previousState.lastRenderedAt < PROGRESS_RENDER_INTERVAL_MS) {

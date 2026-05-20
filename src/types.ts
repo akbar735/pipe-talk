@@ -12,6 +12,7 @@ export enum Type{
     SEND_FILE = 'send-file',
     RECIEVE_FILE = 'recieve-file',
     RECIEVED_FILE = 'recieved-file',
+    FOLDER_TRANSFER_COMPLETE = 'folder-transfer-complete',
     TRANSFER_ABORTED = 'transfer-aborted'
 }
 
@@ -29,6 +30,7 @@ export interface IMessage{
     bytes?: number;
     currentTotalBytes?: number;
     filePath?: string;
+    folderName?: string;
 }
 
 export interface ITransferState{

@@ -71,6 +71,20 @@ export function handleSendFile(
     }
 }
 
+export function handleFolderTransferComplete(socket: ISocketExtended, parsed: IMessage) {
+    const targetClient = parsed.to ? clientsList.get(parsed.to) : undefined;
+
+    if (!targetClient || !parsed.folderName) {
+        return
+    }
+
+    targetClient.write(stringify({
+        type: Type.FOLDER_TRANSFER_COMPLETE,
+        from: socket.userId,
+        folderName: parsed.folderName
+    }))
+}
+
 export function handleRecievedFiles(socket: ISocketExtended, parsed: IMessage) {
     if (!parsed.from) {
         return

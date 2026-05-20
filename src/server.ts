@@ -1,7 +1,7 @@
 import net from 'node:net';
 import { createMessageParser, stringify } from './helper.js';
 import { ISocketExtended, PendingFileMessage, TargetDrainState, Type } from './types.js';
-import { handleListUsers, handleRecievedFiles, handleSendFile, handleSendTo, handleUserId } from './server-request-handlers.js';
+import { handleFolderTransferComplete, handleListUsers, handleRecievedFiles, handleSendFile, handleSendTo, handleUserId } from './server-request-handlers.js';
 import { activeTransfer, clientsList } from './globals.js';
 
 
@@ -31,6 +31,9 @@ const server = net.createServer((socket: ISocketExtended) => {
             }
             if (parsed.type === Type.SEND_FILE) {
                handleSendFile(socket, parsed, targetDrainState, pendingFileMessages)
+            }
+            if (parsed.type === Type.FOLDER_TRANSFER_COMPLETE) {
+               handleFolderTransferComplete(socket, parsed)
             }
             if (parsed.type === Type.RECIEVED_FILE) {
                 handleRecievedFiles(socket, parsed)
