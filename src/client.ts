@@ -11,15 +11,32 @@ import {
     handleClientSocketError
 } from './client-request-handlers.js';
 import { type AskQuestion, type IMessage } from './types.js';
+import { parsePortArgument } from './network.js';
 
 const rl = readline.createInterface({
     input: process.stdin,
     output: process.stdout
 });
 
+const serverAddress = process.argv[2];
+
+if (!serverAddress || net.isIP(serverAddress) === 0) {
+    console.error('Usage: PORT=<port> npm run start:client -- <server-ip-address>');
+    process.exit(1);
+}
+
+let serverPort: number;
+try {
+    serverPort = parsePortArgument(process.argv.slice(3), process.env.PORT);
+} catch (error) {
+    console.error(error instanceof Error ? error.message : error);
+    console.error('Usage: PORT=<port> npm run start:client -- <server-ip-address>');
+    process.exit(1);
+}
+
 const connectionOptions = {
-    host: '192.168.1.3',
-    port: 4000
+    host: serverAddress,
+    port: serverPort
 };
 
 type ClientPromptState = {

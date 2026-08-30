@@ -22,7 +22,7 @@ Available commands
 ------------------
 ${Magenta}list users | lu${RESET_COLOR}         ${Grey}->${RESET_COLOR} ${Cyan}Show everyone currently online${RESET_COLOR}
 ${Magenta}<user>: <message>${RESET_COLOR}       ${Grey}->${RESET_COLOR} ${Cyan}Send a direct message to a user${RESET_COLOR}
-${Magenta}<user>: -f <file-path>${RESET_COLOR}  ${Grey}->${RESET_COLOR} ${Cyan}Send a file to a user${RESET_COLOR}
+${Magenta}<user>: -f <file-path>${RESET_COLOR}  ${Grey}->${RESET_COLOR} ${Cyan}Send a file or folder to a user${RESET_COLOR}
 ${Magenta}clear | clr${RESET_COLOR}             ${Grey}->${RESET_COLOR} ${Cyan}Clear the terminal screen${RESET_COLOR}
 
 ${Grey}Examples${RESET_COLOR}

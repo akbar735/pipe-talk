@@ -3,8 +3,19 @@ import { createMessageParser, stringify } from './helper.js';
 import { ISocketExtended, PendingFileMessage, TargetDrainState, Type } from './types.js';
 import { abortTransferForSender, handleFolderTransferComplete, handleListUsers, handleRecievedFiles, handleSendFile, handleSendTo, handleUserId } from './server-request-handlers.js';
 import { abortedTransferFileIds, activeTransfer, clientsList } from './globals.js';
+import { parsePortArgument } from './network.js';
 
-
+let serverPort: number;
+try {
+    serverPort = parsePortArgument(
+        process.argv.slice(2),
+        process.env.PORT
+    );
+} catch (error) {
+    console.error(error instanceof Error ? error.message : error);
+    console.error('Usage: PORT=<port> npm run start:server');
+    process.exit(1);
+}
 
 const server = net.createServer((socket: ISocketExtended) => {
     const pendingFileMessages: Array<PendingFileMessage> = []
@@ -93,6 +104,16 @@ const server = net.createServer((socket: ISocketExtended) => {
     socket.on('error', handleError)
 });
 
-server.listen(4000, '0.0.0.0', () => {
+server.on('error', (error: NodeJS.ErrnoException) => {
+    if (error.code === 'EADDRINUSE') {
+        console.error(`Port ${serverPort} is already in use. Start the server with a different port, for example: PORT=4001 npm run start:server`);
+        process.exit(1);
+    }
+
+    console.error(`Server error: ${error.message}`);
+    process.exit(1);
+});
+
+server.listen(serverPort, '0.0.0.0', () => {
     console.log(`Server started on: ${JSON.stringify(server.address())}`)
 })
